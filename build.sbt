@@ -5,6 +5,7 @@ ThisBuild / version := "git rev-parse --short HEAD".!!.trim
 ThisBuild / semanticdbEnabled := true
 ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 ThisBuild / scalafixDependencies += "com.github.liancheng" %% "organize-imports" % "0.6.0"
+ThisBuild / Compile / run / fork := true
 Global / onChangedBuildSource := ReloadOnSourceChanges
 Global / excludeLintKeys += mainClass
 
