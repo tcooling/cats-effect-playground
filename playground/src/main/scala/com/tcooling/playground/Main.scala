@@ -5,7 +5,7 @@ import cats.syntax.all._
 import java.io._
 
 /**
- * Current progress: https://typelevel.org/cats-effect/docs/tutorial#copying-data
+ * Current progress: https://typelevel.org/cats-effect/docs/tutorial#dealing-with-cancelation
  */
 object Main extends IOApp {
 
@@ -57,14 +57,14 @@ object Main extends IOApp {
     Resource.fromAutoCloseable(IO(new FileInputStream(f)))
 
   // transfer will do the real work
-  def transfer(origin: InputStream, destination: OutputStream): IO[Long] = ???
+  def transferInitial(origin: InputStream, destination: OutputStream): IO[Long] = ???
 
   /**
    * transfer method will handle the logic for transferring. Even if transfer fails, both streams will be closed.
    */
   def copy(origin: File, destination: File): IO[Long] =
     inputOutputStreams(origin, destination).use {
-      case (in, out) => transfer(in, out)
+      case (in, out) => transferInitial(in, out)
     }
 
   /**
@@ -108,8 +108,38 @@ object Main extends IOApp {
    * separate bracket calls for each stream, nesting them like a flatMap. Resource is better for this kind of thing.
    */
 
-  def transmit(origin: InputStream, destination: OutputStream, buffer: Array[Byte], acc: Long): IO[Long] =
-    ???
+  /**
+   * For the transfer method, we need a loop that on each iteration, reads data from the input stream into a buffer and
+   * then writes the buffer contents to an output stream. At the same time, the loop will keep a counter of the bytes
+   * transferred. To reuse the same buffer, we define it outside of the main loop.
+   *
+   * Note: >> is similar to *> but lazy, so can be used for recursion. >> is same as first.flatMap(_ => second)
+   */
+  def transmit(origin: InputStream, destination: OutputStream, buffer: Array[Byte], acc: Long): IO[Long] = for {
+    amount <- IO.blocking(
+      origin.read(buffer, 0, buffer.length)
+    ) // origin.read returns number of bytes read or -1 if no data
+    count <-
+      if (amount > -1)
+        IO.blocking(destination.write(buffer, 0, amount)) >> transmit(origin, destination, buffer, acc + amount)
+      else IO.pure(acc) // End of read stream reached (by java.io.InputStream contract), nothing to write
+  } yield count         // Returns the actual amount of bytes transmitted
+
+  /**
+   * Note: assuming the InputStream above, when recursion happens, the InputStream is now at the latest position, e.g.
+   * the bytes read are now "gone" and we are at the latest position.
+   *
+   * Could have used IO(action), but for input/output, using IO.blocking(action) is better.
+   *
+   * IO is a monad, hence we can sequence it in a for comprehension. IO is also stack safe, so not concerned with stack
+   * overflow.
+   */
+  def transfer(origin: InputStream, destination: OutputStream): IO[Long] =
+    transmit(origin, destination, new Array[Byte](1024 * 10), 0L)
+
+  /**
+   * IO instances execution can be cancelled (key feature of cats-effect)
+   */
 
   override def run(args: List[String]): IO[ExitCode] = for {
     err <- errorExample
